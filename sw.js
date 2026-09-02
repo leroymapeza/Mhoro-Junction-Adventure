@@ -2,7 +2,7 @@ var CACHE='mhoro-v9';
 var URLS=['./','./index.html','./manifest.json','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',function(e){
 e.waitUntil(caches.open(CACHE).then(function(c){
-return Promise.all(URLS.map(function(u){return c.add(u).catch(function(){});}));}));
+ return Promise.all(URLS.map(function(u){return c.add(u).catch(function(){});}));}));
 self.skipWaiting();});
 self.addEventListener('activate',function(e){
 e.waitUntil(caches.keys().then(function(ns){

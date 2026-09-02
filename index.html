@@ -3,44 +3,147 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Mhoro Junction">
+<meta name="theme-color" content="#120a06">
+<meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
 <title>Mhoro Junction: Baby Hyrax Adventure</title>
 <style>
-html,body{margin:0;padding:0;height:100%;background:#120a06;overflow:hidden;touch-action:none;
--webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
-canvas{display:block;position:absolute}
+html,body{margin:0;padding:0;height:100%;background:#120a06;overflow:hidden;
+touch-action:none;overscroll-behavior:none;
+-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;}
+canvas{display:block;position:absolute;}
+/* ---- rotate-to-play overlay ---- */
+#rotate{display:none;position:fixed;inset:0;z-index:99;
+background:radial-gradient(circle at 50% 30%,#3a2a1a,#120a06);
+color:#ffe9b0;text-align:center;font-family:'Comic Sans MS',sans-serif;
+padding:calc(20px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right))
+ calc(20px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
+box-sizing:border-box;}
+#rotate .phone{width:70px;height:120px;border:5px solid #ffd23f;border-radius:14px;
+margin:30px auto 10px;position:relative;animation:rot 1.6s ease-in-out infinite;}
+#rotate .phone:after{content:'';position:absolute;left:50%;bottom:8px;width:26px;height:4px;
+border-radius:2px;background:#ffd23f;transform:translateX(-50%);}
+@keyframes rot{0%,15%{transform:rotate(0)}60%,100%{transform:rotate(90deg)}}
+#rotate h1{font-size:28px;margin:18px 0 6px;color:#ffd23f;}
+#rotate p{font-size:17px;opacity:.9;line-height:1.5;}
+#rotate .shona{color:#8fd3ff;font-style:italic;}
+/* fullscreen hint chip (landscape screens) */
+#fs{position:fixed;z-index:50;right:calc(10px + env(safe-area-inset-right));
+top:calc(10px + env(safe-area-inset-top));width:46px;height:46px;border-radius:12px;
+border:2px solid #fff;background:rgba(155,123,222,.85);display:none;cursor:pointer;
+-webkit-tap-highlight-color:transparent;}
+#fs svg{display:block;margin:auto;margin-top:9px;}
 </style>
 </head>
 <body>
 <canvas id="cv"></canvas>
+
+<div id="rotate">
+  <div class="phone"></div>
+  <h1>Rotate to play!</h1>
+  <p>This adventure is best in landscape.<br>Turn your phone sideways.</p>
+  <p class="shona">Tendeutsa runhare rwako — titambe!</p>
+</div>
+
+<button id="fs" aria-label="Full screen">
+ <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round">
+  <path d="M3 8V3h5M16 3h5v5M21 16v5h-5M8 21H3v-5"/></svg>
+</button>
+
 <script>
 'use strict';
 /* =====================================================================
-   MHORO JUNCTION : BABY HYRAX ADVENTURE — v3.1 (all patches applied)
-   Patches: save guard, hardened audio, kalimba ambience, win-safe
-   splash/bump, hazard types + hiss/swoosh SFX wiring
+   MHORO JUNCTION : BABY HYRAX ADVENTURE — v3.2 Responsive + Offline
    ===================================================================== */
 const W=960,H=540,TILE=40,ROWS=14,GRAV=1900;
 const cv=document.getElementById('cv'),cx=cv.getContext('2d');
-let SC=1;
-function resize(){
-  const s=Math.min(innerWidth/W,innerHeight/H),d=Math.min(devicePixelRatio||1,2);
-  SC=s;cv.width=W*s*d;cv.height=H*s*d;
-  cv.style.width=W*s+'px';cv.style.height=H*s+'px';
-  cv.style.left=(innerWidth-W*s)/2+'px';cv.style.top=(innerHeight-H*s)/2+'px';
-  cx.setTransform(d*s,0,0,d*s,0,0);
-}
-addEventListener('resize',resize);resize();
+const isTouch=('ontouchstart'in window)||navigator.maxTouchPoints>0;
+let SC=1,safeL=0,safeR=0,safeT=0,safeB=0;
 
-/* ---------- save (PATCH 1: guard short/old saves) ---------- */
+/* ---- safe-area measurement ---- */
+function measureSafe(){
+  const p=document.createElement('div');
+  p.style.cssText='position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;'+
+   'padding:env(safe-area-inset-top) env(safe-area-inset-right) '+
+   'env(safe-area-inset-bottom) env(safe-area-inset-left);';
+  document.body.appendChild(p);
+  const cs=getComputedStyle(p);
+  safeT=parseFloat(cs.paddingTop)||0;safeR=parseFloat(cs.paddingRight)||0;
+  safeB=parseFloat(cs.paddingBottom)||0;safeL=parseFloat(cs.paddingLeft)||0;
+  document.body.removeChild(p);
+}
+
+/* ---- viewport size (iOS-safe) ---- */
+const vv=window.visualViewport;
+function viewSize(){
+  if(vv)return{w:vv.width,h:vv.height,x:vv.offsetLeft,y:vv.offsetTop};
+  return{w:innerWidth,h:innerHeight,x:0,y:0};
+}
+
+/* ---- layout ---- */
+let tbtns={},homeB={};
+function layoutTouch(){
+  const sl=safeL/SC,sr=safeR/SC,sb=safeB/SC,st=safeT/SC;
+  tbtns.l={x:16+sl,y:H-118-sb,w:96,h:96};
+  tbtns.r={x:124+sl,y:H-118-sb,w:96,h:96};
+  tbtns.j={x:W-150-sr,y:H-122-sb,w:118,h:118};
+  homeB={x:W-62-sr,y:10+st,w:48,h:38};
+}
+function resize(){
+  measureSafe();
+  const v=viewSize();
+  const s=Math.min(v.w/W,v.h/H);
+  const d=Math.min(devicePixelRatio||1,2);
+  SC=s;
+  cv.width=Math.round(W*s*d);cv.height=Math.round(H*s*d);
+  cv.style.width=(W*s)+'px';cv.style.height=(H*s)+'px';
+  cv.style.left=(v.x+(v.w-W*s)/2)+'px';
+  cv.style.top=(v.y+(v.h-H*s)/2)+'px';
+  cx.setTransform(d*s,0,0,d*s,0,0);
+  layoutTouch();
+  checkOrientation();
+}
+function checkOrientation(){
+  const rot=document.getElementById('rotate');
+  const portrait=isTouch&&viewSize().h>viewSize().w;
+  rot.style.display=portrait?'block':'none';
+}
+function goFullscreen(){
+  const el=document.documentElement;
+  const req=el.requestFullscreen||el.webkitRequestFullscreen;
+  if(req){req.call(el).catch(()=>{});}
+  if(screen.orientation&&screen.orientation.lock){
+    screen.orientation.lock('landscape').catch(()=>{});
+  }
+}
+if(vv){vv.addEventListener('resize',resize);vv.addEventListener('scroll',resize);}
+addEventListener('resize',resize);
+addEventListener('orientationchange',()=>setTimeout(resize,120));
+document.getElementById('fs').addEventListener('click',e=>{e.stopPropagation();goFullscreen();});
+/* show fullscreen chip only on menu screens for touch devices */
+setInterval(()=>{try{const s=typeof state2!=='undefined'?state2:(typeof mode!=='undefined'?mode:'');
+ document.getElementById('fs').style.display=(isTouch&&(s==='title'||s==='map'))?'block':'none';}catch(e){}},400);
+/* block pinch / double-tap / gestures */
+document.addEventListener('gesturestart',e=>e.preventDefault());
+document.addEventListener('dblclick',e=>e.preventDefault());
+document.addEventListener('touchmove',e=>{if(e.scale&&e.scale!==1)e.preventDefault();},{passive:false});
+resize();
+
+/* ---------- save ---------- */
 let save={stars:[0,0,0,0,0,0,0,0,0],baby:0};
 try{const s=JSON.parse(localStorage.getItem('mhoroJ3'));
   if(s){if(s.stars)save.stars=s.stars;if(typeof s.baby=='number')save.baby=s.baby;}}catch(e){}
 while(save.stars.length<9)save.stars.push(0);
 function persist(){try{localStorage.setItem('mhoroJ3',JSON.stringify(save))}catch(e){}}
 
-/* ---------- audio (PATCH 2: hardened tone) ---------- */
+/* ---------- audio (hardened) ---------- */
 let AC=null;
 function ac(){try{if(!AC)AC=new(window.AudioContext||window.webkitAudioContext)();
   if(AC.state=='suspended')AC.resume();}catch(e){}return AC}
@@ -66,8 +169,6 @@ const SFX={
  hiss(){tone(800,200,.3,'sawtooth',.08)},
  swoop(){tone(1200,400,.2,'sine',.1)}
 };
-
-/* ---------- PATCH 3: kalimba ambience (Game 1 style) ---------- */
 var mNext=0,mBeat=0;
 function kal(f){tone(f,f,.3,'sine',.10);tone(f*2,f*2,.18,'sine',.04);}
 function musicTick(dt){
@@ -79,7 +180,7 @@ function musicTick(dt){
  if(mBeat%8===1)tone(131,118,.25,'sine',.16);
 }
 
-/* ---------- CAST (Game 1 palette) ---------- */
+/* ---------- CAST ---------- */
 const C={shadow:'#DDA057',ink:'#4A2E18',cream:'#FFF6E8',
  orange:'#F0824F',yellow:'#FFC94B',purple:'#9B7BDE',blue:'#6E8FBF',green:'#67C05B'};
 const BABIES=[
@@ -100,7 +201,7 @@ const ZONES=[
  {sky:['#ff6040','#ffaa60'],hill:'#8f2f1a',hill2:'#6f1510',tree:'kopje',  ground:'#F5C97E',grass:'#9f5f2f',rock:'#8B4513',grade:'rgba(255,80,30,.15)',ambient:'ember'}
 ];
 
-/* ---------- levels (9) ---------- */
+/* ---------- levels ---------- */
 const LEVELS=[
 {name:'Musasa Meadow',zone:0,word:'Mhoro = Hello!',
  tip:'Run and jump — jump AGAIN in the air! Cross the bridge, munch masawu, reach the gong!',
@@ -552,8 +653,7 @@ E 214`}
 
 function parseOps(s){const o=[];s.trim().split('\n').forEach(l=>{const p=l.trim().split(/\s+/);if(p[0])o.push(p)});return o}
 function buildLevel(i){
- const L=LEVELS[i],w=L.w,t=new Uint8Array(w*ROWS),
- fruits=[],foes=[],checks=[];
+ const L=LEVELS[i],w=L.w,t=new Uint8Array(w*ROWS),fruits=[],foes=[],checks=[];
  let start={x:3*TILE+5,y:11*TILE},gong={x:(w-5)*TILE,y:11*TILE};
  const set=(x,r,v)=>{if(x>=0&&x<w&&r>=0&&r<ROWS)t[r*w+x]=v};
  parseOps(L.ops).forEach(op=>{
@@ -573,8 +673,7 @@ function buildLevel(i){
   else if(c=='C')checks.push({x:a*TILE+TILE/2,y:11*TILE,on:false})
   else if(c=='E')gong={x:a*TILE,y:11*TILE}
  });
- return {L,t,w,fruits,foes,checks,start,gong,
-   total:fruits.reduce((s,f)=>s+(f.m?3:1),0)};
+ return {L,t,w,fruits,foes,checks,start,gong,total:fruits.reduce((s,f)=>s+(f.m?3:1),0)};
 }
 
 /* ---------- state ---------- */
@@ -589,8 +688,7 @@ const CFLAG=['#3f9e3f','#ffd23f','#e33d3d','#222','#fff'];
 const keys={};
 addEventListener('keydown',e=>{keys[e.code]=1;if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();ac()});
 addEventListener('keyup',e=>keys[e.code]=0);
-const tbtns={l:{x:18,y:H-118,w:92,h:92},r:{x:122,y:H-118,w:92,h:92},j:{x:W-138,y:H-122,w:118,h:118}};
-let vkeys={l:0,r:0,j:0},isTouch=('ontouchstart'in window);
+let vkeys={l:0,r:0,j:0};
 function toGame(a,b){const r=cv.getBoundingClientRect();return{x:(a-r.left)/SC,y:(b-r.top)/SC}}
 function updTouch(e){vkeys={l:0,r:0,j:0};
  for(const t of e.touches){const g=toGame(t.clientX,t.clientY);
@@ -605,7 +703,6 @@ cv.addEventListener('touchend',e=>{e.preventDefault();updTouch(e);
   if(performance.now()-ts.t<260&&Math.hypot(g.x-ts.g.x,g.y-ts.g.y)<26)tap(g.x,g.y);ts=null}},{passive:false});
 cv.addEventListener('mousedown',e=>{ac();const g=toGame(e.clientX,e.clientY);tap(g.x,g.y)});
 function inR(x,y,b){return x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h}
-const homeB={x:W-60,y:10,w:48,h:38};
 
 /* ---------- fx ---------- */
 function part(o){P.push(Object.assign({vx:0,vy:0,g:0,life:.6,type:'dust',size:3,col:'#fff'},o))}
@@ -616,13 +713,14 @@ function toast(x,y,txt){toasts.push({x,y,txt,t:0})}
 function confetti(){for(let i=0;i<130;i++)partS({x:Math.random()*W,y:-20-Math.random()*260,
  vy:70+Math.random()*130,vx:(Math.random()-.5)*60,col:CFLAG[i%5],size:4+Math.random()*5,life:4})}
 
-/* ---------- flow (PATCH 5: win-safe splash/bump + hiss) ---------- */
+/* ---------- flow ---------- */
 function startLevel(i){
  selLevel=i;cur=buildLevel(i);
  p={x:cur.start.x,y:cur.start.y,vx:0,vy:0,w:28,h:26,onG:false,face:1,sq:1,inv:0,jbuf:0,coy:0,air:1,dust:0,celeb:false};
  checkPt={x:cur.start.x,y:cur.start.y};
  camX=Math.max(0,p.x-W*.4);got=0;winT=-1;banner=2.4;shake=0;
  P.length=0;toasts.length=0;sprA.length=0;fireflies.length=0;trailFx.length=0;mode='play';
+ if(isTouch)goFullscreen();
 }
 function splashBack(){
  if(winT>=0)return;
@@ -660,7 +758,7 @@ function floorY(x,y){
  return -1;
 }
 
-/* ---------- update (PATCH 6: hazard types, hiss stomp, swoop landing) ---------- */
+/* ---------- update ---------- */
 function updatePlay(dt){
  time+=dt;banner-=dt;
  const baby=save.baby;
@@ -688,9 +786,8 @@ function updatePlay(dt){
   p.vy+=GRAV*(baby==2&&kj&&p.vy>0?.32:1)*dt;
   if(p.vy>920)p.vy=920;
  }else{p.vx*=.9;p.vy+=GRAV*dt}
- if(Math.abs(p.vx)>200&&Math.random()<.4){
+ if(Math.abs(p.vx)>200&&Math.random()<.4)
   trailFx.push({x:p.x+p.w/2,y:p.y+p.h/2,t:.3,col:BABIES[baby].fur});
- }
  p.x+=p.vx*dt;
  if(p.vx>0&&(isSolid(tAt(p.x+p.w,p.y+3))||isSolid(tAt(p.x+p.w,p.y+p.h-3)))){
    p.x=Math.floor((p.x+p.w)/TILE)*TILE-p.w-.01;p.vx=0}
@@ -850,8 +947,7 @@ function drawBaby(x,y,i,o){
  cx.restore();
 }
 function drawGudo(f){
- const sx=f.x-camX;
- if(sx<-60||sx>W+60)return;
+ const sx=f.x-camX;if(sx<-60||sx>W+60)return;
  cx.save();cx.translate(sx,f.y+30);
  if(f.st=='fly')cx.rotate(f.rot);
  cx.scale(f.dir,1);OL();
@@ -877,8 +973,7 @@ function drawGudo(f){
  cx.restore();
 }
 function drawNyoka(f){
- const sx=f.x-camX;
- if(sx<-80||sx>W+80)return;
+ const sx=f.x-camX;if(sx<-80||sx>W+80)return;
  cx.save();cx.translate(sx,f.y+30);
  if(f.st=='fly')cx.rotate(f.rot);
  cx.scale(f.dir,1);OL();
@@ -886,13 +981,11 @@ function drawNyoka(f){
  cx.strokeStyle='#5a9e4f';cx.lineWidth=10;cx.lineCap='round';
  cx.beginPath();cx.moveTo(-20,0);
  cx.quadraticCurveTo(-10,slither,0,-slither);
- cx.quadraticCurveTo(10,slither,20,0);
- cx.stroke();
+ cx.quadraticCurveTo(10,slither,20,0);cx.stroke();
  cx.strokeStyle='#7fbe6f';cx.lineWidth=6;
  cx.beginPath();cx.moveTo(-20,0);
  cx.quadraticCurveTo(-10,slither,0,-slither);
- cx.quadraticCurveTo(10,slither,20,0);
- cx.stroke();
+ cx.quadraticCurveTo(10,slither,20,0);cx.stroke();
  cx.fillStyle='#5a9e4f';cx.beginPath();cx.arc(24,-2,8,0,7);cx.fill();cx.stroke();
  cx.fillStyle='#fff';cx.beginPath();cx.arc(26,-4,3,0,7);cx.fill();
  cx.fillStyle='#2A1B12';cx.beginPath();cx.arc(27,-4,1.5,0,7);cx.fill();
@@ -915,8 +1008,7 @@ function drawKamba(x,y,s){
  cx.fillStyle='#5f7040';
  for(let i=0;i<3;i++){
   cx.beginPath();cx.arc(-24+i*4,30,2.5,0,7);cx.fill();
-  cx.beginPath();cx.arc(14+i*4,30,2.5,0,7);cx.fill();
- }
+  cx.beginPath();cx.arc(14+i*4,30,2.5,0,7);cx.fill();}
  const shellGrad=cx.createRadialGradient(-5,-8,5,-5,-8,38);
  shellGrad.addColorStop(0,'#9ab86f');shellGrad.addColorStop(.7,'#6f8a45');shellGrad.addColorStop(1,'#5a7038');
  cx.fillStyle=shellGrad;
@@ -924,16 +1016,11 @@ function drawKamba(x,y,s){
  cx.strokeStyle='#4a5530';cx.lineWidth=3;
  cx.beginPath();cx.ellipse(0,0,34,8,0,0,Math.PI);cx.stroke();
  cx.strokeStyle='rgba(74,85,48,.6)';cx.lineWidth=1.8;
- const scutes=[[-14,-14],[0,-16],[14,-14],[-20,-4],[0,-6],[20,-4],[-10,4],[10,4]];
- scutes.forEach(sc=>{
+ [[-14,-14],[0,-16],[14,-14],[-20,-4],[0,-6],[20,-4],[-10,4],[10,4]].forEach(sc=>{
   cx.beginPath();
-  for(let i=0;i<6;i++){
-   const a=i*Math.PI/3+Math.PI/6;
-   const px=sc[0]+Math.cos(a)*7,py=sc[1]+Math.sin(a)*5;
-   cx[i?'lineTo':'moveTo'](px,py);
-  }
-  cx.closePath();cx.stroke();
- });
+  for(let i=0;i<6;i++){const a=i*Math.PI/3+Math.PI/6;
+   cx[i?'lineTo':'moveTo'](sc[0]+Math.cos(a)*7,sc[1]+Math.sin(a)*5);}
+  cx.closePath();cx.stroke();});
  cx.fillStyle='rgba(255,255,255,.15)';
  cx.beginPath();cx.ellipse(-10,-14,12,8,-.3,0,7);cx.fill();
  cx.fillStyle='#8fa85f';
@@ -942,24 +1029,15 @@ function drawKamba(x,y,s){
  cx.fillStyle='#6f8a45';
  for(let i=0;i<3;i++){
   cx.beginPath();cx.arc(-20+i*5,28,2.8,0,7);cx.fill();
-  cx.beginPath();cx.arc(18+i*5,28,2.8,0,7);cx.fill();
- }
+  cx.beginPath();cx.arc(18+i*5,28,2.8,0,7);cx.fill();}
  cx.fillStyle='#8fa85f';
- cx.beginPath();
- cx.moveTo(28,-4);
- cx.quadraticCurveTo(38,-8,42,-2);
- cx.quadraticCurveTo(44,4,40,8);
- cx.quadraticCurveTo(34,10,28,6);
+ cx.beginPath();cx.moveTo(28,-4);cx.quadraticCurveTo(38,-8,42,-2);
+ cx.quadraticCurveTo(44,4,40,8);cx.quadraticCurveTo(34,10,28,6);
  cx.closePath();cx.fill();cx.stroke();
- cx.strokeStyle='rgba(90,112,64,.5)';cx.lineWidth=1.5;
- cx.beginPath();cx.moveTo(32,-2);cx.quadraticCurveTo(36,0,32,3);cx.stroke();
- cx.beginPath();cx.moveTo(35,-3);cx.quadraticCurveTo(39,-1,35,2);cx.stroke();
  const headGrad=cx.createRadialGradient(44,-2,2,44,-2,12);
  headGrad.addColorStop(0,'#a8c07f');headGrad.addColorStop(1,'#8fa85f');
  cx.fillStyle=headGrad;
  cx.beginPath();cx.ellipse(44,-2,11,9,0,0,7);cx.fill();cx.stroke();
- cx.strokeStyle='rgba(90,112,64,.4)';cx.lineWidth=1.2;
- cx.beginPath();cx.arc(44,-4,7,.5,2.6);cx.stroke();
  cx.strokeStyle='#c89b3c';cx.lineWidth=2.2;
  cx.beginPath();cx.arc(47,-4,4.5,0,7);cx.stroke();
  cx.beginPath();cx.arc(40,-4,4.5,0,7);cx.stroke();
@@ -971,9 +1049,6 @@ function drawKamba(x,y,s){
  cx.fillStyle='#fff';
  cx.beginPath();cx.arc(47.5,-4.5,.6,0,7);cx.fill();
  cx.beginPath();cx.arc(40.5,-4.5,.6,0,7);cx.fill();
- cx.strokeStyle='#5a7038';cx.lineWidth=2;
- cx.beginPath();cx.moveTo(44,-8);cx.lineTo(50,-9);cx.stroke();
- cx.beginPath();cx.moveTo(37,-8);cx.lineTo(43,-9);cx.stroke();
  cx.fillStyle='#6f8a45';cx.beginPath();cx.arc(52,-2,2,0,7);cx.fill();
  cx.strokeStyle=C.ink;cx.lineWidth=2;cx.lineCap='round';
  cx.beginPath();cx.arc(47,2,5,.3,Math.PI-.3);cx.stroke();
@@ -1210,8 +1285,7 @@ function drawFireflies(){
   cx.globalAlpha=a;
   glow(sx,f.y,10,'rgba(216,255,154,.5)');
   cx.fillStyle='rgba(216,255,154,.9)';cx.beginPath();cx.arc(sx,f.y,3,0,7);cx.fill();
-  cx.globalAlpha=1;
- });
+  cx.globalAlpha=1;});
 }
 function drawTrail(){
  trailFx.forEach(tr=>{
@@ -1219,8 +1293,7 @@ function drawTrail(){
   cx.globalAlpha=tr.t/.3*.3;
   cx.fillStyle=tr.col;
   cx.beginPath();cx.ellipse(sx,tr.y,12*(tr.t/.3),8*(tr.t/.3),0,0,7);cx.fill();
-  cx.globalAlpha=1;
- });
+  cx.globalAlpha=1;});
 }
 function shadowAt(x,feet,w){
  const gy=floorY(x,feet);if(gy<0)return;
@@ -1243,18 +1316,14 @@ function drawWorld(){
  cur.foes.forEach(f=>{
   if(f.x-camX>-60&&f.x-camX<W+60){
    shadowAt(f.x,f.y+40,16);
-   if(f.type=='nyoka')drawNyoka(f);
-   else drawGudo(f);
-  }
- });
+   if(f.type=='nyoka')drawNyoka(f);else drawGudo(f);}});
  drawTrail();
  shadowAt(p.x+p.w/2,p.y+p.h,16);
  if(!(p.inv>0&&Math.sin(time*30)>0)){
   drawBaby(p.x+p.w/2-camX,p.y+p.h/2-2,save.baby,{face:p.face,sq:p.sq,onG:p.onG,
    run:p.onG&&Math.abs(p.vx)>40,t:time});
   if(save.baby==3){cx.strokeStyle='rgba(120,230,150,'+(0.25+Math.sin(time*4)*.12)+')';
-   cx.lineWidth=2;cx.beginPath();cx.arc(p.x+p.w/2-camX,p.y+p.h/2,24,0,7);cx.stroke()}
- }
+   cx.lineWidth=2;cx.beginPath();cx.arc(p.x+p.w/2-camX,p.y+p.h/2,24,0,7);cx.stroke()}}
  drawParticles();drawFireflies();
  toasts.forEach(t=>{cx.globalAlpha=Math.max(0,1-t.t);btxt(t.txt,t.x-camX,t.y,18,'#fff');cx.globalAlpha=1});
  if(zone==4){const px=p.x+p.w/2-camX,py=p.y+p.h/2,
@@ -1274,7 +1343,7 @@ function drawHUD(){
  btxt(got+' / '+cur.total,104,38,20,'#fff');
  if(banner>0){cx.globalAlpha=Math.min(1,banner);
   btxt(cur.L.name,W/2,86,34,'#fff');
-  txt('★ zone '+ (cur.L.zone+1) +' ★',W/2,112,14,'rgba(255,255,255,.9)');
+  txt('★ zone '+(cur.L.zone+1)+' ★',W/2,112,14,'rgba(255,255,255,.9)');
   cx.globalAlpha=1}
  panel(homeB.x,homeB.y,homeB.w,homeB.h);
  cx.fillStyle='#fff';cx.beginPath();
@@ -1365,10 +1434,8 @@ function drawMap(){
  drawMapBG();
  cx.strokeStyle='rgba(90,60,30,.7)';cx.lineWidth=16;cx.lineCap='round';
  cx.beginPath();cx.moveTo(NODES[0].x,NODES[0].y);
- for(let i=1;i<NODES.length;i++){
-  const a=NODES[i-1],b=NODES[i];
-  cx.quadraticCurveTo((a.x+b.x)/2+15,(a.y+b.y)/2-30,b.x,b.y);
- }
+ for(let i=1;i<NODES.length;i++){const a=NODES[i-1],b=NODES[i];
+  cx.quadraticCurveTo((a.x+b.x)/2+15,(a.y+b.y)/2-30,b.x,b.y);}
  cx.stroke();
  cx.strokeStyle='#e8c98a';cx.lineWidth=10;cx.stroke();
  for(let i=0;i<NODES.length-1;i++){
@@ -1381,13 +1448,10 @@ function drawMap(){
    cx.fillStyle='rgba(255,220,120,'+br2+')';
    cx.beginPath();cx.arc(qx,qy,2.5*depthScale(i),0,7);cx.fill();
    cx.fillStyle='rgba(255,220,120,'+br2*.3+')';
-   cx.beginPath();cx.arc(qx,qy,6*depthScale(i),0,7);cx.fill();
-  }
- }
+   cx.beginPath();cx.arc(qx,qy,6*depthScale(i),0,7);cx.fill();}}
  let active=-1;
  for(let i=0;i<NODES.length;i++){
-  const n=NODES[i],z=ZONES[LEVELS[i].zone],un=unlocked(i);
-  const ds=depthScale(i);
+  const n=NODES[i],z=ZONES[LEVELS[i].zone],un=unlocked(i),ds=depthScale(i);
   if(un&&save.stars[i]==0&&active<0)active=i;
   if(i==active){glow(n.x,n.y,50*ds,'rgba(255,215,110,.5)');
    cx.strokeStyle='rgba(255,225,140,.9)';cx.lineWidth=3;cx.setLineDash([6,8]);
@@ -1500,8 +1564,7 @@ function drawSelect(){
   btxt(BABIES[i].name,x+92,290,24,'#7a4a10');
   txt('★ '+BABIES[i].ab,x+92,320,15,'#c0392b');
   txt(BABIES[i].desc,x+92,344,13,'#6b5030');
-  cx.fillStyle=BABIES[i].scarf;rr(x+52,364,80,10,5);cx.fill();
- }
+  cx.fillStyle=BABIES[i].scarf;rr(x+52,364,80,10,5);cx.fill();}
  panel(20,16,90,36);btxt('◀ Map',65,40,16,'#fff');
  cx.fillStyle='#3fae5a';rr(W/2-90,H-70,180,48,24);cx.fill();
  cx.strokeStyle=C.ink;cx.lineWidth=3;cx.stroke();
@@ -1535,7 +1598,7 @@ function drawTitle(){
   drawBaby(W/2-165+i*110,378+Math.abs(Math.sin(time*4+i))*-16,i,{t:time+i,onG:false})}
  cx.globalAlpha=.6+Math.sin(time*4)*.4;
  btxt('TAP ANYWHERE TO PLAY',W/2,452,24,'#fff');cx.globalAlpha=1;
- txt('iPhone/iPad: Share ▸ Add to Home Screen — plays full screen!',W/2,H-14,12,'rgba(255,255,255,.75)');
+ txt('iPhone/iPad: Share ▸ Add to Home Screen — plays full screen offline!',W/2,H-14,12,'rgba(255,255,255,.75)');
  PS.forEach(q=>{cx.save();cx.translate(q.x,q.y);cx.rotate(q.rot||0);
   cx.fillStyle=q.col;cx.globalAlpha=Math.min(1,q.life);
   cx.fillRect(-q.size/2,-q.size/2,q.size,q.size*.6);cx.restore()});cx.globalAlpha=1;
@@ -1549,21 +1612,19 @@ function tap(x,y){
  else if(mode=='map'){
   if(inR(x,y,{x:W-186,y:12,w:176,h:44})){SFX.tap();go('select');return}
   NODES.forEach((n,i)=>{const ds=depthScale(i);
-   if(Math.hypot(x-n.x,y-n.y)<36*ds&&unlocked(i)){SFX.tap();selLevel=i;go('tale')}});
- }
+   if(Math.hypot(x-n.x,y-n.y)<36*ds&&unlocked(i)){SFX.tap();selLevel=i;go('tale')}});}
  else if(mode=='tale'){SFX.tap();startLevel(selLevel)}
  else if(mode=='select'){
   if(inR(x,y,{x:20,y:16,w:90,h:36})){SFX.tap();go('map');return}
   if(inR(x,y,{x:W/2-90,y:H-70,w:180,h:48})){SFX.tap();go('map');return}
   for(let i=0;i<4;i++)if(inR(x,y,{x:90+i*205,y:130,w:185,h:290})){
-   save.baby=i;persist();SFX.fruit()}
- }
+   save.baby=i;persist();SFX.fruit()}}
  else if(mode=='win'){if(winT>1.4){SFX.tap();go('map')}}
  else if(mode=='play'){if(inR(x,y,homeB)){SFX.tap();go('map')}}
 }
 function go(m){pending=m;transT=0}
 
-/* ---------- loop (PATCH 4: musicTick) ---------- */
+/* ---------- loop ---------- */
 let last=0;
 function loop(ts){
  requestAnimationFrame(loop);
@@ -1583,6 +1644,11 @@ function loop(ts){
   cx.fillStyle='rgba(18,10,6,'+Math.max(0,a)+')';cx.fillRect(0,0,W,H)}
 }
 requestAnimationFrame(loop);
+
+/* ---------- offline (service worker) ---------- */
+if('serviceWorker' in navigator){
+ window.addEventListener('load',()=>{navigator.serviceWorker.register('./sw.js').catch(()=>{});});
+}
 </script>
 </body>
 </html>
